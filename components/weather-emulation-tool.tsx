@@ -6,14 +6,70 @@ import * as THREE from "three"
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
 import GUI from "lil-gui"
 
+// Helper function to create a raindrop texture
+function createRaindropTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas")
+  canvas.width = 32
+  canvas.height = 128 // Elongated for a streak
+  const context = canvas.getContext("2d")!
+
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.height)
+  gradient.addColorStop(0, "rgba(255,255,255,0)")
+  gradient.addColorStop(0.2, "rgba(255,255,255,0.8)")
+  gradient.addColorStop(0.8, "rgba(255,255,255,0.8)")
+  gradient.addColorStop(1, "rgba(255,255,255,0)")
+
+  context.fillStyle = gradient
+  context.fillRect(canvas.width / 2 - 2, 0, 4, canvas.height) // Thin streak
+
+  return new THREE.CanvasTexture(canvas)
+}
+
+// Helper function to create a snowflake texture
+function createSnowflakeTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas")
+  canvas.width = 64
+  canvas.height = 64
+  const context = canvas.getContext("2d")!
+
+  const gradient = context.createRadialGradient(
+    canvas.width / 2,
+    canvas.height / 2,
+    0,
+    canvas.width / 2,
+    canvas.height / 2,
+    canvas.width / 2,
+  )
+  gradient.addColorStop(0, "rgba(255,255,255,1)")
+  gradient.addColorStop(0.5, "rgba(255,255,255,0.7)")
+  gradient.addColorStop(1, "rgba(255,255,255,0)")
+
+  context.fillStyle = gradient
+  context.fillRect(0, 0, canvas.width, canvas.height)
+
+  return new THREE.CanvasTexture(canvas)
+}
+
 const WeatherEmulationTool: React.FC = () => {
   const mountRef = useRef<HTMLDivElement>(null)
   const guiRef = useRef<GUI | null>(null)
+
+  // Texture refs for disposal
+  const rainTextureRef = useRef<THREE.CanvasTexture | null>(null)
+  const snowTextureRef = useRef<THREE.CanvasTexture | null>(null)
 
   useEffect(() => {
     if (!mountRef.current) return
 
     const currentMount = mountRef.current
+
+    // Create textures once
+    if (!rainTextureRef.current) {
+      rainTextureRef.current = createRaindropTexture()
+    }
+    if (!snowTextureRef.current) {
+      snowTextureRef.current = createSnowflakeTexture()
+    }
 
     // Scene setup
     const scene = new THREE.Scene()
@@ -50,11 +106,12 @@ const WeatherEmulationTool: React.FC = () => {
       rainIntensity: 5000,
       rainSpeed: 5,
       rainColor: 0xaaaaee,
+      rainSize: 0.3, // Adjusted for texture
       // Snow
-      snow: false, // Initially off
+      snow: false,
       snowIntensity: 2000,
-      snowSpeed: 0.5, // Slower than rain
-      flakeSize: 0.15,
+      snowSpeed: 0.5,
+      flakeSize: 0.2, // Adjusted for texture
       snowColor: 0xffffff,
       // Fog
       fog: true,
@@ -79,15 +136,19 @@ const WeatherEmulationTool: React.FC = () => {
       rainGeometry = new THREE.BufferGeometry()
       rainMaterial = new THREE.PointsMaterial({
         color: params.rainColor,
-        size: 0.1,
+        size: params.rainSize,
+        map: rainTextureRef.current,
         transparent: true,
         opacity: 0.7,
+        blending: THREE.NormalBlending,
+        depthWrite: false, // Important for transparent textures
+        sizeAttenuation: true,
       })
 
-      rainVertices.length = 0 // Clear previous vertices
+      rainVertices.length = 0
       for (let i = 0; i < params.rainIntensity; i++) {
         const x = Math.random() * 50 - 25
-        const y = Math.random() * 30 + 5 // Start above ground
+        const y = Math.random() * 30 + 5
         const z = Math.random() * 50 - 25
         rainVertices.push(x, y, z)
       }
@@ -105,17 +166,15 @@ const WeatherEmulationTool: React.FC = () => {
 
       const positions = rainGeometry.attributes.position.array as Float32Array
       for (let i = 0; i < positions.length; i += 3) {
-        positions[i + 1] -= params.rainSpeed * 0.1 // Y position (fall)
-        positions[i] += params.windStrengthX * 0.05 // X wind influence
-        positions[i + 2] += params.windStrengthZ * 0.05 // Z wind influence
+        positions[i + 1] -= params.rainSpeed * 0.1
+        positions[i] += params.windStrengthX * 0.05
+        positions[i + 2] += params.windStrengthZ * 0.05
 
-        // Reset particle if it falls below ground or goes too far
         if (positions[i + 1] < 0) {
-          positions[i + 1] = Math.random() * 30 + 10 // Reset Y
-          positions[i] = Math.random() * 50 - 25 // Reset X
-          positions[i + 2] = Math.random() * 50 - 25 // Reset Z
+          positions[i + 1] = Math.random() * 30 + 10
+          positions[i] = Math.random() * 50 - 25
+          positions[i + 2] = Math.random() * 50 - 25
         }
-        // Basic boundary reset for wind
         if (positions[i] > 25 || positions[i] < -25 || positions[i + 2] > 25 || positions[i + 2] < -25) {
           positions[i + 1] = Math.random() * 30 + 10
           positions[i] = Math.random() * 50 - 25
@@ -140,9 +199,11 @@ const WeatherEmulationTool: React.FC = () => {
       snowMaterial = new THREE.PointsMaterial({
         color: params.snowColor,
         size: params.flakeSize,
+        map: snowTextureRef.current,
         transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending, // Makes flakes brighter
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false, // Important for transparent textures
         sizeAttenuation: true,
       })
 
@@ -166,14 +227,13 @@ const WeatherEmulationTool: React.FC = () => {
       if (snowParticles) snowParticles.visible = true
 
       const positions = snowGeometry.attributes.position.array as Float32Array
-      const time = Date.now() * 0.0002 // For subtle flutter
+      const time = Date.now() * 0.0002
 
       for (let i = 0; i < positions.length; i += 3) {
-        positions[i + 1] -= params.snowSpeed * 0.1 // Y position (fall)
+        positions[i + 1] -= params.snowSpeed * 0.1
 
-        // Wind influence (slightly more drift for snow)
-        positions[i] += params.windStrengthX * 0.07 + Math.sin(time + positions[i + 2] * 0.5) * 0.02 // X wind + flutter
-        positions[i + 2] += params.windStrengthZ * 0.07 + Math.cos(time + positions[i] * 0.5) * 0.02 // Z wind + flutter
+        positions[i] += params.windStrengthX * 0.07 + Math.sin(time + positions[i + 2] * 0.5 + i * 0.1) * 0.03
+        positions[i + 2] += params.windStrengthZ * 0.07 + Math.cos(time + positions[i] * 0.5 + i * 0.1) * 0.03
 
         if (positions[i + 1] < 0) {
           positions[i + 1] = Math.random() * 30 + 10
@@ -187,6 +247,10 @@ const WeatherEmulationTool: React.FC = () => {
         }
       }
       snowGeometry.attributes.position.needsUpdate = true
+      // Rotate snow particles slightly for more dynamic look
+      if (snowParticles) {
+        snowParticles.rotation.y += 0.0005
+      }
     }
 
     if (params.rain) createRain()
@@ -225,6 +289,12 @@ const WeatherEmulationTool: React.FC = () => {
     rainFolder.add(params, "rainIntensity", 100, 20000, 100).name("Intensity").onFinishChange(createRain)
     rainFolder.add(params, "rainSpeed", 0.1, 20, 0.1).name("Speed")
     rainFolder
+      .add(params, "rainSize", 0.05, 1, 0.01)
+      .name("Size")
+      .onChange(() => {
+        if (rainMaterial) rainMaterial.size = params.rainSize
+      })
+    rainFolder
       .addColor(params, "rainColor")
       .name("Color")
       .onChange((value: number) => {
@@ -247,7 +317,7 @@ const WeatherEmulationTool: React.FC = () => {
     snowFolder.add(params, "snowIntensity", 100, 20000, 100).name("Intensity").onFinishChange(createSnow)
     snowFolder.add(params, "snowSpeed", 0.1, 5, 0.05).name("Speed")
     snowFolder
-      .add(params, "flakeSize", 0.01, 0.5, 0.01)
+      .add(params, "flakeSize", 0.01, 1, 0.01) // Increased max size
       .name("Flake Size")
       .onChange(() => {
         if (snowMaterial) snowMaterial.size = params.flakeSize
@@ -269,7 +339,6 @@ const WeatherEmulationTool: React.FC = () => {
       controls.update()
       if (params.rain) updateRain()
       if (params.snow) updateSnow()
-      // No explicit updateFog needed in loop, changes are event-driven
       renderer.render(scene, camera)
     }
     animate()
@@ -291,22 +360,36 @@ const WeatherEmulationTool: React.FC = () => {
       renderer.dispose()
       if (rainGeometry) rainGeometry.dispose()
       if (rainMaterial) rainMaterial.dispose()
+      if (rainTextureRef.current) {
+        rainTextureRef.current.dispose()
+        rainTextureRef.current = null
+      }
 
       if (snowGeometry) snowGeometry.dispose()
       if (snowMaterial) snowMaterial.dispose()
+      if (snowTextureRef.current) {
+        snowTextureRef.current.dispose()
+        snowTextureRef.current = null
+      }
 
       if (guiRef.current) {
         guiRef.current.destroy()
         guiRef.current = null
       }
-      // Clean up scene children more thoroughly if needed
+
       while (scene.children.length > 0) {
         const object = scene.children[0]
-        if (object instanceof THREE.Mesh) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
           if (object.geometry) object.geometry.dispose()
           if (object.material) {
             if (Array.isArray(object.material)) {
-              object.material.forEach((material) => material.dispose())
+              object.material.forEach((material: THREE.Material | THREE.Material[]) => {
+                if (Array.isArray(material)) {
+                  material.forEach((m) => m.dispose())
+                } else {
+                  material.dispose()
+                }
+              })
             } else {
               object.material.dispose()
             }
